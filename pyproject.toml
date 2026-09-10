@@ -40,6 +40,8 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "integration: requires a live Postgres (set AIRSPACE_TEST_DSN)",
+    # These truncate raw.state_vectors, so they refuse to run against a
+    # populated database unless AIRSPACE_ALLOW_DESTRUCTIVE_TESTS=1.
+    "integration: requires a live Postgres; destructive to the raw schema",
 ]
 filterwarnings = ["error::DeprecationWarning"]

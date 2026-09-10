@@ -14,6 +14,7 @@ a guarantee.
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 import psycopg
@@ -22,7 +23,16 @@ from ingestion.logging_setup import get_logger
 
 log = get_logger(__name__)
 
-MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "db" / "migrations"
+# Defaults to the repo layout. Overridable because once the package is
+# pip-installed - as it is in the Airflow image - site-packages has no sibling
+# db/ directory, and silently finding no migrations would be worse than saying
+# where to look.
+MIGRATIONS_DIR = Path(
+    os.environ.get(
+        "AIRSPACE_MIGRATIONS_DIR",
+        Path(__file__).resolve().parent.parent / "db" / "migrations",
+    )
+)
 
 _MIGRATIONS_TABLE_DDL = """
 CREATE TABLE IF NOT EXISTS raw.schema_migrations (

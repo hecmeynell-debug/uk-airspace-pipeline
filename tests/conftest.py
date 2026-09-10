@@ -7,6 +7,7 @@ CI (which always has the service container) still runs everything.
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import UTC, datetime
 
@@ -145,6 +146,8 @@ def migrated_db(db_settings: Settings):
 
     truncate = "TRUNCATE raw.state_vectors, raw.ingestion_runs RESTART IDENTITY CASCADE"
 
+    _refuse_if_it_would_destroy_real_data(db_settings)
+
     # autocommit, deliberately: TRUNCATE takes an ACCESS EXCLUSIVE lock, and an
     # uncommitted one on this connection would block the ingest connection
     # below for as long as the fixture lives.
@@ -156,6 +159,31 @@ def migrated_db(db_settings: Settings):
             yield ingest_conn
 
         owner_conn.execute(truncate)
+
+
+def _refuse_if_it_would_destroy_real_data(db_settings: Settings) -> None:
+    """Stop the suite rather than silently wipe a populated landing zone.
+
+    The integration fixtures TRUNCATE raw.state_vectors, which is fine against
+    an empty database and destructive against one somebody has been ingesting
+    into. Failing loudly beats losing their data; the opt-out exists because CI
+    runs against a throwaway database where truncation is exactly right.
+    """
+    if os.environ.get("AIRSPACE_ALLOW_DESTRUCTIVE_TESTS") == "1":
+        return
+
+    with psycopg.connect(db_settings.owner_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM raw.state_vectors")
+        existing = cur.fetchone()[0]
+
+    if existing:
+        pytest.fail(
+            f"raw.state_vectors already holds {existing} rows and the integration "
+            "tests would truncate them.\n"
+            "Set AIRSPACE_ALLOW_DESTRUCTIVE_TESTS=1 to proceed, or point the tests "
+            "at a throwaway database.",
+            pytrace=False,
+        )
 
 
 @pytest.fixture

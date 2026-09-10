@@ -1,0 +1,150 @@
+# Airflow overlay.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.airflow.yml up -d
+#
+# Kept separate from docker-compose.yml on purpose: the base stack stays a
+# single Postgres container, so anyone who just wants to read the repo or run
+# the tests is not made to start a five-container Airflow deployment first.
+#
+# Differences from Airflow's own reference compose, and why:
+#   - LocalExecutor, not Celery. No redis, worker or flower. The workload is
+#     one small task every couple of minutes; a distributed queue would be
+#     scaffolding with nothing to hold up.
+#   - A dedicated metadata database, separate from the analytics database.
+#     Airflow's own state has nothing to do with the airspace data, and mixing
+#     them would put scheduler churn in the same instance as the landing zone.
+#   - Named volumes for logs and metadata rather than bind mounts, for the same
+#     OneDrive reason recorded in ADR-0001.
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: docker/airflow.Dockerfile
+  image: uk-airspace-airflow:local
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: >-
+      postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD:-airflow_local_dev_pw}@airflow-postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-airflow_local_dev_jwt_secret}
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    # Local demo only: every visitor is an admin, so there is no password to
+    # manage. This is exactly the setting that must not survive to Phase 4.
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: 'true'
+
+    # --- ingestion configuration -------------------------------------------
+    # Inside the compose network the database is reachable by service name, so
+    # the host-oriented value in .env is overridden here.
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: '5432'
+    POSTGRES_DB: ${POSTGRES_DB:-airspace}
+    AIRSPACE_OWNER_PASSWORD: ${AIRSPACE_OWNER_PASSWORD:?set in .env}
+    AIRSPACE_INGEST_PASSWORD: ${AIRSPACE_INGEST_PASSWORD:?set in .env}
+    OPENSKY_CLIENT_ID: ${OPENSKY_CLIENT_ID:-}
+    OPENSKY_CLIENT_SECRET: ${OPENSKY_CLIENT_SECRET:-}
+    OPENSKY_LAT_MIN: ${OPENSKY_LAT_MIN:-49.0}
+    OPENSKY_LAT_MAX: ${OPENSKY_LAT_MAX:-61.0}
+    OPENSKY_LON_MIN: ${OPENSKY_LON_MIN:--10.0}
+    OPENSKY_LON_MAX: ${OPENSKY_LON_MAX:-3.0}
+    POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-120}
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  volumes:
+    - ./dags:/opt/airflow/dags:ro
+    - airflow_logs:/opt/airflow/logs
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on: &airflow-common-depends-on
+    airflow-postgres:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+
+services:
+  airflow-postgres:
+    image: postgres:16-alpine
+    container_name: airspace-airflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:-airflow_local_dev_pw}
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_metadata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow -q"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    # Not published to the host: Airflow's metadata database is reachable only
+    # from inside the compose network.
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airspace-airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -euo pipefail
+        airflow db migrate
+        echo "[init] airflow metadata database ready"
+    restart: "no"
+
+  airflow-apiserver:
+    <<: *airflow-common
+    container_name: airspace-airflow-apiserver
+    command: api-server
+    ports:
+      - "127.0.0.1:${AIRFLOW_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 45s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airspace-airflow-scheduler
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 45s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: airspace-airflow-dag-processor
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 45s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+volumes:
+  airflow_metadata:
+    name: airspace_airflow_metadata
+  airflow_logs:
+    name: airspace_airflow_logs

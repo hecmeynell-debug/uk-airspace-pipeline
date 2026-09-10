@@ -115,6 +115,51 @@ Exit codes are distinct so a scheduler can respond appropriately: `0` success,
 ./.venv/Scripts/python.exe -m ruff check .
 ```
 
+The integration tests truncate `raw.state_vectors`, so they refuse to run
+against a database that already holds rows. Point them at a throwaway
+database, or opt in explicitly:
+
+```bash
+AIRSPACE_ALLOW_DESTRUCTIVE_TESTS=1 pytest
+```
+
+### Running it on a schedule (Airflow)
+
+Airflow lives in an overlay, so the base stack stays a single Postgres
+container for anyone who just wants to read the repo or run the tests.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.airflow.yml up -d --build
+```
+
+The UI is at <http://127.0.0.1:8080>. Two DAGs, both paused on creation:
+
+| DAG | Schedule | Purpose |
+|---|---|---|
+| `airspace_migrate` | manual | Apply pending schema migrations. The only component that connects with DDL rights |
+| `opensky_ingest` | `*/2 * * * *` | Fetch one snapshot and land it |
+
+Trigger `airspace_migrate` once, then unpause `opensky_ingest`.
+
+`catchup` is off, deliberately. OpenSky serves live state vectors (one hour of
+history for registered users), so a catch-up run cannot retrieve the window it
+is nominally filling — it would re-fetch *now* under an old logical date,
+mislabel the data and spend credits for it. Gaps stay gaps, honestly.
+
+Checking DAGs parse, which is what CI will assert in Phase 3:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.airflow.yml \
+  run --rm airflow-scheduler airflow dags list-import-errors
+```
+
+Ingestion code is baked into the image rather than mounted, so it matches the
+commit CI built; only `./dags` is mounted. Rebuild after changing `ingestion/`.
+Shut the overlay down with the same `-f` pair plus `down`.
+
+> The overlay sets `SIMPLE_AUTH_MANAGER_ALL_ADMINS`, so the local UI has no
+> login. That is a local-demo convenience and must not survive to Phase 4.
+
 ### OpenSky credentials
 
 Ingestion (Phase 1) runs anonymously by default, which is enough for a smoke
