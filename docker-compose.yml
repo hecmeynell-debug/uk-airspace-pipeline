@@ -1,0 +1,42 @@
+# Phase 0: PostgreSQL only. Ingestion, Airflow and dbt services are added in
+# later phases so that the foundation stays independently verifiable.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: airspace-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-airspace}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - copy .env.example to .env}
+      AIRSPACE_OWNER_PASSWORD: ${AIRSPACE_OWNER_PASSWORD:?set in .env}
+      AIRSPACE_INGEST_PASSWORD: ${AIRSPACE_INGEST_PASSWORD:?set in .env}
+      AIRSPACE_TRANSFORM_PASSWORD: ${AIRSPACE_TRANSFORM_PASSWORD:?set in .env}
+      AIRSPACE_READER_PASSWORD: ${AIRSPACE_READER_PASSWORD:?set in .env}
+      # Deterministic collation and UTC everywhere; all timestamps are stored
+      # as timestamptz and reasoned about in UTC.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      # Loopback-only: the database is never exposed on the host's LAN address.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Named volume, not a bind mount. A bind mount into a OneDrive-synced
+      # directory corrupts Postgres data files; a named volume lives inside the
+      # Docker VM and is unaffected by file sync.
+      - postgres_data:/var/lib/postgresql/data
+      # Runs once, only when the data directory is empty.
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-airspace} -q"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    # Modest, explicit limits so the local footprint is predictable.
+    shm_size: 256mb
+
+volumes:
+  postgres_data:
+    name: airspace_postgres_data

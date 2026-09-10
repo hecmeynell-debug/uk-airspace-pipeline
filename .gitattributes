@@ -1,0 +1,6 @@
+* text=auto eol=lf
+# Files consumed inside Linux containers must never be checked out with CRLF.
+*.sh   text eol=lf
+*.sql  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf

@@ -1,0 +1,45 @@
+# --- secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+*.egg-info/
+dist/
+build/
+
+# --- dbt ---
+transform/**/target/
+transform/**/dbt_packages/
+transform/**/logs/
+.user.yml
+
+# --- airflow ---
+airflow.db
+airflow-webserver.pid
+standalone_admin_password.txt
+logs/
+
+# --- local data / docker ---
+data/
+*.csv
+*.parquet
+*.jsonl
+
+# --- editors / os ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
