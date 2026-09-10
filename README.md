@@ -59,7 +59,7 @@ one starts.
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Repository foundations, Postgres 16, least-privilege roles, ADR-0001 | ✅ Complete |
-| 1 | OpenSky client, raw schema, idempotent ingestion, scheduled job | 🚧 Ingestion complete and tested; Airflow DAG outstanding |
+| 1 | OpenSky client, raw schema, idempotent ingestion, scheduled job | ✅ Complete |
 | 2 | dbt Core: staging → intermediate → marts, late-arriving data handling | Not started |
 | 3 | GitHub Actions CI, structured logging, row-count and lag checks | Not started |
 | 4 | Cloud deployment, IaC, secrets management | Not started |
