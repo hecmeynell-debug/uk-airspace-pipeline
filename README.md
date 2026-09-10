@@ -60,7 +60,7 @@ one starts.
 |---|---|---|
 | 0 | Repository foundations, Postgres 16, least-privilege roles, ADR-0001 | ✅ Complete |
 | 1 | OpenSky client, raw schema, idempotent ingestion, scheduled job | ✅ Complete |
-| 2 | dbt Core: staging → intermediate → marts, late-arriving data handling | Not started |
+| 2 | dbt Core: staging → intermediate → marts, late-arriving data handling | ✅ Complete |
 | 3 | GitHub Actions CI, structured logging, row-count and lag checks | Not started |
 | 4 | Cloud deployment, IaC, secrets management | Not started |
 | 5 | Documentation, ADRs, portfolio packaging | Not started |
@@ -159,6 +159,52 @@ Shut the overlay down with the same `-f` pair plus `down`.
 
 > The overlay sets `SIMPLE_AUTH_MANAGER_ALL_ADMINS`, so the local UI has no
 > login. That is a local-demo convenience and must not survive to Phase 4.
+
+### Transforming the data (dbt)
+
+```bash
+pip install -e ".[transform]"
+export DBT_PROFILES_DIR="$PWD/transform"
+
+dbt deps  --project-dir transform
+dbt build --project-dir transform     # runs models and every test
+```
+
+dbt connects as `airspace_transform`: it reads `raw`, owns the schemas it
+builds, and has no write access to the landing zone. It cannot corrupt the data
+it reads.
+
+| Layer | Materialisation | Purpose |
+|---|---|---|
+| `staging` | view | One-to-one cleaning of `raw`. Renames, casts, unit conversions. No filtering |
+| `intermediate` | view | Assigns a coarse grid cell and altitude band. The last layer where per-airframe identity exists |
+| `marts` | table | `fct_airspace_activity_hourly`, `fct_airspace_activity_daily`. Aggregates only |
+
+**Late-arriving data.** An observation can land well after the hour it belongs
+to — a poll at 12:01 returns positions stamped 11:58, and a retry after an
+outage lands much older ones. Filtering incrementally on `ingested_at` would
+collect those rows but leave the *hour* they belong to already built and now
+wrong. So the hourly mart filters on `observed_at` with a lookback window
+(`late_arrival_lookback_hours`, default 3) and uses `delete+insert` keyed on
+`activity_hour`: affected hours are rebuilt wholesale rather than appended to.
+Anything arriving later than the lookback is not half-merged silently — a
+reconciliation test fails and tells you to `--full-refresh`.
+
+**The aggregate-only constraint is enforced, not just documented.** Two
+mechanisms, deliberately overlapping:
+
+- `assert_marts_expose_no_aircraft_identity` inspects the built schema and
+  fails if `icao24`, `callsign`, `squawk`, `origin_country`, raw coordinates or
+  similar ever appear in a mart — whatever route they arrive by.
+- `airspace_reader`, the credential a dashboard or read API would use, is
+  granted `USAGE` on the marts schema and nothing else. It cannot read `raw`,
+  `staging` or `intermediate`. A consumer built on it is *structurally* unable
+  to reach per-airframe data, rather than merely choosing not to.
+
+`origin_country` is on the forbidden list on purpose. Breaking traffic down by
+country of registration would be ordinary aviation statistics in another
+project; in a defence-adjacent one it invites exactly the reading this project
+exists to avoid, and excluding it costs nothing.
 
 ### OpenSky credentials
 

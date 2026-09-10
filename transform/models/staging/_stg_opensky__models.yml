@@ -1,0 +1,81 @@
+version: 2
+
+models:
+  - name: stg_opensky__state_vectors
+    description: >
+      Cleaned, one-to-one view over raw.state_vectors. No filtering, no
+      aggregation - renames, casts and derived columns only.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [icao24, observed_at]
+    columns:
+      - name: icao24
+        description: >
+          Deduplication key only. Does not appear in any mart.
+        data_tests: [not_null]
+      - name: observed_at
+        data_tests: [not_null]
+      - name: observed_hour
+        data_tests: [not_null]
+      - name: latitude
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: -90
+                max_value: 90
+                inclusive: true
+      - name: longitude
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: -180
+                max_value: 180
+                inclusive: true
+      - name: true_track_deg
+        description: >
+          Heading in degrees. The bound is asymmetric - 0 is due north and
+          valid, 360 is the same bearing expressed wrongly - so this cannot be
+          expressed with accepted_range's single inclusive flag.
+        data_tests:
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0 and true_track_deg < 360"
+      - name: on_ground
+        data_tests: [not_null]
+      - name: has_position
+        data_tests: [not_null]
+      - name: ingestion_run_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_opensky__ingestion_runs')
+                field: run_id
+
+  - name: stg_opensky__ingestion_runs
+    description: Cleaned view over raw.ingestion_runs, with derived timings.
+    columns:
+      - name: run_id
+        data_tests: [not_null, unique]
+      - name: status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['running', 'succeeded', 'failed']
+      - name: rows_received
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, inclusive: true}
+      - name: rows_inserted
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, inclusive: true}
+      - name: credits_estimated
+        description: Credits this run was expected to cost against the daily allowance.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1, max_value: 4, inclusive: true}

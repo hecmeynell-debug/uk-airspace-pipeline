@@ -1,0 +1,60 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: raw
+    database: airspace
+    description: >
+      Landing zone for public ADS-B state vectors from the OpenSky Network.
+      Append-only, with ingestion provenance on every record. Nothing in this
+      schema is transformed; nothing downstream of it exposes per-airframe
+      identity.
+
+    tables:
+      - name: state_vectors
+        description: One row per distinct (icao24, observed_at) observation.
+        loaded_at_field: ingested_at
+        freshness:
+          # Ingestion polls every two minutes, so half an hour without a new
+          # row means the pipeline is degraded rather than merely quiet.
+          warn_after: {count: 30, period: minute}
+          error_after: {count: 6, period: hour}
+        columns:
+          - name: icao24
+            description: >
+              Transponder address. Present solely as the deduplication key and
+              to count distinct airframes in aggregate. It must not appear in
+              any mart - asserted by
+              tests/assert_marts_expose_no_aircraft_identity.sql.
+            data_tests: [not_null]
+          - name: observed_at
+            description: time_position where reported, otherwise last_contact.
+            data_tests: [not_null]
+          - name: ingestion_run_id
+            data_tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('raw', 'ingestion_runs')
+                    field: run_id
+          - name: on_ground
+            data_tests: [not_null]
+
+      - name: ingestion_runs
+        description: >
+          One row per ingestion attempt. The provenance spine: every landed
+          observation references the run that first saw it.
+        columns:
+          - name: run_id
+            data_tests: [not_null, unique]
+          - name: status
+            data_tests:
+              - not_null
+              - accepted_values:
+                  arguments:
+                    values: ['running', 'succeeded', 'failed']
+          - name: auth_mode
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: ['anonymous', 'oauth2_client_credentials']

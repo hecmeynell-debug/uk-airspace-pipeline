@@ -1,0 +1,56 @@
+name: airspace
+version: 0.1.0
+config-version: 2
+
+profile: airspace
+
+model-paths: ["models"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # Spatial resolution of the aggregates, in degrees. One degree is coarse on
+  # purpose: it describes regional traffic density without approaching a
+  # per-aircraft track. Raising it is a deliberate act, not a default.
+  grid_degrees: 1
+  # How far back the incremental hourly mart reprocesses on every run, to
+  # absorb observations that landed after their hour had already been built.
+  late_arrival_lookback_hours: 3
+
+# dbt owns the schemas it builds, so it is the only thing that can grant read
+# access to them. airspace_reader was created at bootstrap with no grants at
+# all, deliberately, because there was nothing yet that it should be able to
+# read; this is where that gets closed.
+#
+# Note what is granted: usage and select on the marts schema only. The reader
+# role still cannot see raw, staging or intermediate - so a dashboard or read
+# API built on this credential is structurally incapable of reaching
+# per-airframe data, rather than merely choosing not to.
+#
+# Guarded by an existence check because on-run-end also fires for commands that
+# may run before the marts schema exists.
+on-run-end:
+  - |
+    do $$
+    begin
+      if exists (
+        select 1 from information_schema.schemata
+        where schema_name = '{{ target.schema }}_marts'
+      ) then
+        execute 'grant usage on schema {{ target.schema }}_marts to airspace_reader';
+        execute 'grant select on all tables in schema {{ target.schema }}_marts to airspace_reader';
+      end if;
+    end $$;
+
+models:
+  airspace:
+    staging:
+      +materialized: view
+      +schema: staging
+    intermediate:
+      +materialized: view
+      +schema: intermediate
+    marts:
+      +materialized: table
+      +schema: marts

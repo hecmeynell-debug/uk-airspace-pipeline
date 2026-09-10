@@ -65,7 +65,12 @@ psql -v ON_ERROR_STOP=1 \
 	GRANT SELECT ON ALL TABLES IN SCHEMA raw TO airspace_transform;
 	ALTER DEFAULT PRIVILEGES FOR ROLE airspace_owner IN SCHEMA raw
 	  GRANT SELECT ON TABLES TO airspace_transform;
-	SELECT format('GRANT CREATE ON DATABASE %I TO airspace_transform', :'db')\gexec
+	-- CREATE lets dbt build its own schemas. TEMPORARY is required by dbt's
+	-- delete+insert and merge incremental strategies, which stage rows in a
+	-- temp table; revoking it from PUBLIC above took it away. Granted only to
+	-- transform - the ingest role avoids temp tables by design and does not
+	-- get it.
+	SELECT format('GRANT CREATE, TEMPORARY ON DATABASE %I TO airspace_transform', :'db')\gexec
 
 	-- reader: no grants yet. Marts do not exist until Phase 2; the role is
 	-- created now so that no downstream component is ever tempted to read

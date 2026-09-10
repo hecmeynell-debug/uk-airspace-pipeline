@@ -1,0 +1,17 @@
+# Connects as airspace_transform: SELECT on raw, CREATE on the database for its
+# own schemas, and no write access to the landing zone. dbt cannot corrupt the
+# data it reads.
+airspace:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('POSTGRES_HOST', '127.0.0.1') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | int }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'airspace') }}"
+      user: airspace_transform
+      password: "{{ env_var('AIRSPACE_TRANSFORM_PASSWORD') }}"
+      schema: analytics
+      threads: 4
+      connect_timeout: 10
+      keepalives_idle: 0

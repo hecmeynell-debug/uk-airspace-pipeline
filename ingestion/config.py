@@ -18,6 +18,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # user-configurable; the passwords are.
 OWNER_ROLE = "airspace_owner"
 INGEST_ROLE = "airspace_ingest"
+TRANSFORM_ROLE = "airspace_transform"
+READER_ROLE = "airspace_reader"
 
 
 def credit_cost_for_area(area_sq_deg: float) -> int:
@@ -53,6 +55,8 @@ class Settings(BaseSettings):
     postgres_db: str = "airspace"
     airspace_owner_password: str = ""
     airspace_ingest_password: str = ""
+    airspace_transform_password: str = ""
+    airspace_reader_password: str = ""
     # Fail fast rather than hanging when the database is unreachable.
     postgres_connect_timeout: int = 10
 
@@ -135,3 +139,17 @@ class Settings(BaseSettings):
     def ingest_dsn(self) -> str:
         """Connection used by the loader. SELECT/INSERT on raw, nothing more."""
         return self._dsn(INGEST_ROLE, self.airspace_ingest_password)
+
+    @property
+    def transform_dsn(self) -> str:
+        """Connection used by dbt. Reads raw, owns everything it builds."""
+        return self._dsn(TRANSFORM_ROLE, self.airspace_transform_password)
+
+    @property
+    def reader_dsn(self) -> str:
+        """Read-only consumer connection: aggregate marts and nothing else.
+
+        Cannot reach raw, staging or intermediate, so anything built on this
+        credential is structurally unable to read per-airframe data.
+        """
+        return self._dsn(READER_ROLE, self.airspace_reader_password)

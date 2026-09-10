@@ -1,0 +1,30 @@
+version: 2
+
+models:
+  - name: int_state_vectors__gridded
+    description: >
+      Positioned observations assigned to a coarse spatial cell and an altitude
+      band. The last model in which per-airframe identity exists.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [icao24, observed_at]
+    columns:
+      - name: icao24
+        data_tests: [not_null]
+      - name: grid_lat
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: -90, max_value: 90, inclusive: true}
+      - name: grid_lon
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: -180, max_value: 180, inclusive: true}
+      - name: altitude_band
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ground', 'below_10k', '10k_to_24k', '24k_to_35k', 'above_35k', 'unknown']

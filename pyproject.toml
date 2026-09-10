@@ -19,6 +19,10 @@ dev = [
     "respx>=0.21",
     "ruff>=0.5",
 ]
+transform = [
+    "dbt-core>=1.9",
+    "dbt-postgres>=1.9",
+]
 
 [project.scripts]
 airspace-ingest = "ingestion.run:main"
