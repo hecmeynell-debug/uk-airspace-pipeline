@@ -39,21 +39,50 @@ def _fetch(conn: psycopg.Connection, sql: str, params: tuple = ()) -> list[dict[
 
 
 def grid_density(conn: psycopg.Connection, hours: int) -> list[dict[str, Any]]:
-    """Observation density per grid cell.
+    """Observation density and dominant flow direction per grid cell.
 
     Cells, not positions. The resolution is coarse by design - it shows where
-    traffic was dense, not where anything was.
+    traffic was dense and which way it was broadly moving, not where anything
+    was or where any particular aircraft went.
+
+    Combining the per-hour circular means back into one bearing needs care.
+    Each row stores a mean bearing and a resultant length, which together are
+    the polar form of a vector; converting back to components, taking a
+    sample-weighted mean of those, and re-deriving the angle is exact. Taking
+    a plain average of the bearings would not be - it would put the mean of
+    350 and 10 degrees at 180, pointing precisely backwards.
     """
     return _fetch(
         conn,
         f"""
+        WITH cells AS (
+            SELECT grid_lat,
+                   grid_lon,
+                   sum(observation_count)   AS observation_count,
+                   sum(distinct_aircraft)   AS aircraft_bucket_total,
+                   sum(track_sample_count)  AS track_sample_count,
+                   sum(track_sample_count * track_concentration
+                       * sin(radians(dominant_track_deg)))
+                       / nullif(sum(track_sample_count), 0) AS mean_sin,
+                   sum(track_sample_count * track_concentration
+                       * cos(radians(dominant_track_deg)))
+                       / nullif(sum(track_sample_count), 0) AS mean_cos
+              FROM {HOURLY}
+             WHERE activity_hour >= now() - make_interval(hours => %s)
+             GROUP BY grid_lat, grid_lon
+        )
         SELECT grid_lat,
                grid_lon,
-               sum(observation_count)  AS observation_count,
-               sum(distinct_aircraft)  AS aircraft_bucket_total
-          FROM {HOURLY}
-         WHERE activity_hour >= now() - make_interval(hours => %s)
-         GROUP BY grid_lat, grid_lon
+               observation_count,
+               aircraft_bucket_total,
+               track_sample_count,
+               CASE WHEN mean_sin IS NOT NULL
+                    THEN round(mod(degrees(atan2(mean_sin, mean_cos))::numeric + 360, 360), 1)
+               END AS dominant_track_deg,
+               CASE WHEN mean_sin IS NOT NULL
+                    THEN round(sqrt(mean_sin ^ 2 + mean_cos ^ 2)::numeric, 3)
+               END AS track_concentration
+          FROM cells
          ORDER BY grid_lat, grid_lon
         """,
         (hours,),

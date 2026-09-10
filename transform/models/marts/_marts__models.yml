@@ -37,6 +37,30 @@ models:
           - not_null
           - dbt_utils.accepted_range:
               arguments: {min_value: 1, inclusive: true}
+      - name: dominant_track_deg
+        description: >
+          Circular mean heading of airborne observations in the cell, in
+          compass degrees. Computed via atan2 over averaged sin/cos components,
+          because headings cannot be averaged arithmetically. An aggregate
+          direction of flow, not any aircraft's track.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, max_value: 360, inclusive: true}
+      - name: track_concentration
+        description: >
+          Resultant length, 0 to 1. 1 means every aircraft in the cell headed
+          the same way; near 0 means the headings cancelled and the mean
+          bearing is meaningless. The dashboard suppresses arrows below a
+          threshold rather than drawing noise.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, max_value: 1, inclusive: true}
+      - name: track_sample_count
+        description: Airborne observations contributing to the circular mean.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, inclusive: true}
       - name: contributing_run_count
         description: How many ingestion runs contributed to this bucket.
         data_tests: [not_null]

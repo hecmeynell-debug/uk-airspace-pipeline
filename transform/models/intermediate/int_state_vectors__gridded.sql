@@ -41,6 +41,22 @@ gridded as (
         baro_altitude_ft,
         velocity_kts,
         on_ground,
+        true_track_deg,
+
+        -- Headings are circular, so they cannot be averaged arithmetically:
+        -- 350 and 10 would average to 180, the exact opposite of the truth.
+        -- Decomposing into components here lets the mart take a plain avg() of
+        -- each and recombine them with atan2, which is the correct circular
+        -- mean. Aircraft on the ground have meaningless tracks and are
+        -- excluded rather than allowed to drag the direction around.
+        case
+            when not on_ground and true_track_deg is not null
+                then sin(radians(true_track_deg))
+        end as track_sin,
+        case
+            when not on_ground and true_track_deg is not null
+                then cos(radians(true_track_deg))
+        end as track_cos,
 
         ingestion_run_id,
         ingested_at

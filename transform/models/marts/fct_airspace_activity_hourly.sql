@@ -57,6 +57,13 @@ aggregated as (
         round(avg(baro_altitude_ft)::numeric, 0)  as avg_baro_altitude_ft,
         round(avg(velocity_kts)::numeric, 1)      as avg_velocity_kts,
 
+        -- Components of the circular mean heading. Airborne observations only,
+        -- so the count differs from observation_count and is kept for anyone
+        -- recombining these across hours.
+        count(track_sin)                       as track_sample_count,
+        avg(track_sin)                         as mean_sin,
+        avg(track_cos)                         as mean_cos,
+
         min(observed_at)                       as first_observed_at,
         max(observed_at)                        as last_observed_at,
 
@@ -68,6 +75,51 @@ aggregated as (
     from observations
     group by 1, 2, 3, 4
 
+),
+
+with_direction as (
+
+    select
+        *,
+
+        -- Recombine the components into a mean bearing. atan2 returns
+        -- -180..180, so shift into 0..360 the way a compass reads.
+        case
+            when track_sample_count > 0
+                then round(mod(degrees(atan2(mean_sin, mean_cos))::numeric + 360, 360), 1)
+        end as dominant_track_deg,
+
+        -- Resultant length: 1 means every aircraft in this cell was heading the
+        -- same way (an airway), 0 means the headings cancelled out entirely
+        -- (a holding pattern, a terminal area, or simply too few samples).
+        -- The dashboard uses it to decide whether a direction is worth drawing
+        -- at all, because a mean bearing over scattered headings is noise
+        -- dressed as a finding.
+        case
+            when track_sample_count > 0
+                then round(sqrt(mean_sin ^ 2 + mean_cos ^ 2)::numeric, 3)
+        end as track_concentration
+
+    from aggregated
+
 )
 
-select * from aggregated
+-- Listed explicitly so the intermediate trigonometric components stay out of
+-- the published mart.
+select
+    activity_hour,
+    grid_lat,
+    grid_lon,
+    altitude_band,
+    observation_count,
+    distinct_aircraft,
+    avg_baro_altitude_ft,
+    avg_velocity_kts,
+    dominant_track_deg,
+    track_concentration,
+    track_sample_count,
+    first_observed_at,
+    last_observed_at,
+    contributing_run_count,
+    last_ingested_at
+from with_direction

@@ -185,7 +185,7 @@ it reads.
 |---|---|---|
 | `staging` | view | One-to-one cleaning of `raw`. Renames, casts, unit conversions. No filtering |
 | `intermediate` | view | Assigns a coarse grid cell and altitude band. The last layer where per-airframe identity exists |
-| `marts` | table | `fct_airspace_activity_hourly`, `fct_airspace_activity_daily`, `fct_ingestion_health`. Aggregates only |
+| `marts` | table | `fct_airspace_activity_hourly` (density + flow), `fct_airspace_activity_daily`, `fct_ingestion_health`. Aggregates only |
 
 **Late-arriving data.** An observation can land well after the hour it belongs
 to — a poll at 12:01 returns positions stamped 11:58, and a retry after an
@@ -221,14 +221,39 @@ Interactive API docs at `/docs`.
 | Endpoint | Returns |
 |---|---|
 | `/api/meta` | Region, source, limitations and the non-goals |
-| `/api/activity/grid?hours=` | Observation density per 1° grid cell |
+| `/api/activity/grid?hours=` | Observation density and dominant flow direction per 1° grid cell |
 | `/api/activity/hourly?hours=` | Hourly observation totals |
 | `/api/activity/altitude?hours=` | Profile by altitude band |
 | `/api/activity/daily?days=` | Daily profile with a coverage measure |
 | `/api/pipeline-health?hours=` | Runs, error rates, latency, credit spend |
 | `/health` | Liveness of the service itself, independent of the pipeline |
 
-Three things about it are deliberate:
+**The map shows density and flow, not flights.** Each cell carries an
+observation count and a *circular mean* of the headings observed in it, drawn
+as an arrow. That answers "which way is traffic moving through here" — the
+North Atlantic tracks, the approach flows into the southeast — at the level of
+a grid cell, without any aircraft existing in the output.
+
+Three details matter more than they look:
+
+- **Headings cannot be averaged arithmetically.** 350° and 10° average to 180°,
+  pointing exactly backwards, while looking entirely plausible. The mean is
+  computed as `atan2` over averaged sin/cos components. There is a test for
+  precisely this case.
+- **Arrows are suppressed where they would be noise.** Alongside the mean, each
+  cell stores a *resultant length* from 0 to 1 — how much the headings agreed.
+  Below 0.55, or fewer than three airborne observations, no arrow is drawn. A
+  mean bearing over scattered headings is noise dressed as a finding.
+- **The basemap is decoration.** Natural Earth 1:50m coastline, public domain,
+  vendored into the repo by `scripts/vendor_coastline.py` rather than fetched
+  at runtime. Nothing is computed from it.
+
+If the grid were ever made finer than 1°, it would need a minimum-count
+suppression threshold: a 0.25° cell holding one aircraft over open water
+localises it to ~28 km, which is individual tracking arriving through the back
+door of a fine enough grid.
+
+Three further things are deliberate:
 
 - **It holds only the reader credential.** The container is given
   `AIRSPACE_READER_PASSWORD` and no other — not the owner, ingest or transform
@@ -332,6 +357,7 @@ If you use this work in a publication, cite the OpenSky Network paper:
 
 ```
 ingestion/      OpenSky client, load jobs and health checks
+scripts/        one-off utilities (coastline vendoring)
 transform/      dbt Core project
 api/            read API and dashboard (reader role only)
 dags/           Airflow DAGs

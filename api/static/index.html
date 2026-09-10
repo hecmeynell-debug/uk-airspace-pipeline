@@ -23,12 +23,15 @@
     --c3: #6ea6cd;
     --c4: #3d82b4;
     --c5: #1f5f8b;
+    --coast: #9aa5b1;
+    --flow: #b4531f;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #14161a; --panel: #1c1f25; --ink: #e8eaee; --muted: #98a1ae;
       --line: #2c313a; --accent: #7fb5da;
       --c0: #1e242c; --c1: #263644; --c2: #2f4c62; --c3: #3b6785; --c4: #4b86ab; --c5: #6ba7cd;
+      --coast: #6b7683; --flow: #e0894f;
     }
   }
   * { box-sizing: border-box; }
@@ -94,10 +97,16 @@
 
   <div class="grid2">
     <div class="panel">
-      <h2>Traffic density</h2>
-      <p class="note">Observations per 1&deg; grid cell, last 24h. Cells, not positions &mdash; deliberately too coarse to locate anything.</p>
+      <h2>Traffic density and flow</h2>
+      <p class="note">
+        Observations per 1&deg; grid cell over the last 24h, with the dominant direction of travel.
+        Cells and mean bearings &mdash; not positions, not routes, and deliberately too coarse to locate anything.
+      </p>
       <div id="gridChart"></div>
-      <div class="legend"><span>fewer</span><i id="lg0"></i><i id="lg1"></i><i id="lg2"></i><i id="lg3"></i><i id="lg4"></i><i id="lg5"></i><span>more</span></div>
+      <div class="legend">
+        <span>fewer</span><i id="lg0"></i><i id="lg1"></i><i id="lg2"></i><i id="lg3"></i><i id="lg4"></i><i id="lg5"></i><span>more</span>
+        <span style="margin-left:14px">&#8594; mean heading, drawn only where aircraft broadly agreed</span>
+      </div>
     </div>
 
     <div class="panel">
@@ -152,8 +161,15 @@ function emptyState(node, msg) {
   node.innerHTML = `<p class="empty">${msg}</p>`;
 }
 
-/* ---------- grid density -------------------------------------------- */
-function renderGrid(node, rows, region) {
+/* ---------- density map + flow field --------------------------------- */
+
+// A mean bearing over scattered headings is noise dressed as a finding, so
+// arrows are drawn only where the aircraft in a cell broadly agreed and there
+// were enough of them to mean anything.
+const MIN_CONCENTRATION = 0.55;
+const MIN_TRACK_SAMPLES = 3;
+
+function renderGrid(node, rows, region, coastline) {
   if (!rows.length) return emptyState(node, "No observations in this window yet.");
 
   // Infer cell size from the data rather than duplicating the dbt var here.
@@ -168,7 +184,7 @@ function renderGrid(node, rows, region) {
   const lonMax = Math.max(region.lon_max, ...lonsAll.map(l => l + cell));
 
   const pad = {l: 34, r: 8, t: 8, b: 22};
-  const W = 560, H = 460;
+  const W = 560, H = 470;
   const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
   const x = lon => pad.l + ((lon - lonMin) / (lonMax - lonMin)) * iw;
   const y = lat => pad.t + (1 - (lat - latMin) / (latMax - latMin)) * ih;
@@ -177,14 +193,55 @@ function renderGrid(node, rows, region) {
   const colour = v => SCALE[Math.min(SCALE.length - 1,
     Math.floor(Math.pow(v / max, 0.55) * SCALE.length))];
 
-  let body = `<rect x="${pad.l}" y="${pad.t}" width="${iw}" height="${ih}" fill="var(--c0)" stroke="var(--line)"/>`;
+  let body = `<defs><clipPath id="frame">`
+           + `<rect x="${pad.l}" y="${pad.t}" width="${iw}" height="${ih}"/></clipPath></defs>`
+           + `<rect x="${pad.l}" y="${pad.t}" width="${iw}" height="${ih}" fill="var(--c0)" stroke="var(--line)"/>`;
 
+  // Density underneath.
   for (const r of rows) {
     const lat = +r.grid_lat, lon = +r.grid_lon, v = +r.observation_count;
     const x0 = x(lon), x1 = x(lon + cell), y0 = y(lat + cell), y1 = y(lat);
     body += `<rect x="${x0}" y="${y0}" width="${Math.max(1, x1 - x0)}" height="${Math.max(1, y1 - y0)}" `
          +  `fill="${colour(v)}" stroke="var(--panel)" stroke-width="0.5">`
-         +  `<title>${lat}°, ${lon}° — ${fmt(v)} observations</title></rect>`;
+         +  `<title>${lat}°, ${lon}° — ${fmt(v)} observations, ${fmt(r.aircraft_bucket_total)} aircraft</title></rect>`;
+  }
+
+  // Coastline over it, for orientation only. Nothing is computed from this.
+  if (coastline && coastline.lines) {
+    const paths = coastline.lines.map(line =>
+      "M " + line.map(p => `${x(p[0]).toFixed(1)} ${y(p[1]).toFixed(1)}`).join(" L ")).join(" ");
+    body += `<path d="${paths}" fill="none" stroke="var(--coast)" stroke-width="1" `
+         +  `stroke-linejoin="round" stroke-linecap="round" opacity="0.85" clip-path="url(#frame)"/>`;
+  }
+
+  // Flow arrows on top.
+  const arrowLen = Math.min(x(lonMin + cell) - x(lonMin), y(latMin) - y(latMin + cell)) * 0.44;
+  let drawn = 0;
+  for (const r of rows) {
+    const conc = r.track_concentration === null ? 0 : +r.track_concentration;
+    const samples = +r.track_sample_count || 0;
+    if (conc < MIN_CONCENTRATION || samples < MIN_TRACK_SAMPLES) continue;
+
+    const bearing = +r.dominant_track_deg;
+    const cx = x(+r.grid_lon + cell / 2), cy = y(+r.grid_lat + cell / 2);
+    // Compass bearing to screen vector: 0° is north, and screen y grows downward.
+    const rad = (bearing * Math.PI) / 180;
+    const dx = Math.sin(rad), dy = -Math.cos(rad);
+    const hx = cx + dx * arrowLen, hy = cy + dy * arrowLen;
+    const tx = cx - dx * arrowLen * 0.6, ty = cy - dy * arrowLen * 0.6;
+    // Arrowhead: step back along the shaft, then out along its normal.
+    const bx = hx - dx * 4.5, by = hy - dy * 4.5;
+    const nx = -dy * 2.6, ny = dx * 2.6;
+
+    body += `<g opacity="${(0.35 + 0.65 * conc).toFixed(2)}" clip-path="url(#frame)">`
+         +  `<line x1="${tx.toFixed(1)}" y1="${ty.toFixed(1)}" x2="${hx.toFixed(1)}" y2="${hy.toFixed(1)}" `
+         +  `stroke="var(--flow)" stroke-width="1.4" stroke-linecap="round"/>`
+         +  `<polygon points="${hx.toFixed(1)},${hy.toFixed(1)} `
+         +  `${(bx + nx).toFixed(1)},${(by + ny).toFixed(1)} ${(bx - nx).toFixed(1)},${(by - ny).toFixed(1)}" `
+         +  `fill="var(--flow)"/>`
+         +  `<title>${r.grid_lat}°, ${r.grid_lon}° — mean heading ${bearing.toFixed(0)}° `
+         +  `(agreement ${(conc * 100).toFixed(0)}%, ${samples} airborne observations)</title></g>`;
+    drawn++;
   }
 
   for (let lat = Math.ceil(latMin / 2) * 2; lat <= latMax; lat += 2) {
@@ -192,6 +249,10 @@ function renderGrid(node, rows, region) {
   }
   for (let lon = Math.ceil(lonMin / 4) * 4; lon <= lonMax; lon += 4) {
     body += `<text x="${x(lon)}" y="${H - 6}" text-anchor="middle">${lon}°</text>`;
+  }
+  if (!drawn) {
+    body += `<text x="${pad.l + iw / 2}" y="${pad.t + 16}" text-anchor="middle">`
+         +  `no consistent flow direction yet</text>`;
   }
 
   node.innerHTML = svg(W, H, body);
@@ -321,13 +382,16 @@ async function load() {
   SCALE.forEach((c, i) => { const n = el("lg" + i); if (n) n.style.background = c; });
 
   try {
-    const [meta, fresh, grid, alt, hourly, health] = await Promise.all([
+    const [meta, fresh, grid, alt, hourly, health, coastline] = await Promise.all([
       getJSON("/api/meta"),
       getJSON("/api/freshness"),
       getJSON("/api/activity/grid?hours=24"),
       getJSON("/api/activity/altitude?hours=24"),
       getJSON("/api/activity/hourly?hours=48"),
       getJSON("/api/pipeline-health?hours=24"),
+      // Static, vendored, public-domain basemap. A missing basemap must not
+      // take the whole page down, so it degrades to no coastline.
+      getJSON("/static/coastline.json").catch(() => null),
     ]);
 
     el("limitations").textContent = meta.limitations || "";
@@ -341,7 +405,7 @@ async function load() {
     }
 
     renderStats(fresh.data, hourly.data, health.data);
-    renderGrid(el("gridChart"), grid.data, meta.region);
+    renderGrid(el("gridChart"), grid.data, meta.region, coastline);
     renderAltitude(el("altChart"), alt.data);
     renderHourly(el("hourlyChart"), hourly.data);
     renderHealth(el("healthTable"), health.data);
