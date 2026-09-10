@@ -51,16 +51,24 @@ Everything is treated as undifferentiated traffic volume.
 
 ## Definition of Done
 
-- [ ] Fully reproducible with `docker compose up` locally
-- [ ] Documented cloud deployment path
-- [ ] CI green on `main`
-- [ ] Idempotent: re-running the same time window does not create duplicates
-- [ ] Clear provenance on every record
-- [ ] README allows a stranger to understand purpose, architecture and
+- [x] Fully reproducible with `docker compose up` locally
+      — verified from a completely empty volume
+- [~] Documented cloud deployment path
+      — documented in ADR-0004, deliberately not yet executed
+- [x] CI green on `main`
+      — and verified to go red when the aggregate-only constraint is broken
+- [x] Idempotent: re-running the same time window does not create duplicates
+      — 629 rows inserted, then 0 inserted and 629 duplicates, on live data
+- [x] Clear provenance on every record
+      — every row references the ingestion run that first observed it; 0 rows
+      missing provenance
+- [x] README allows a stranger to understand purpose, architecture and
       limitations in under 5 minutes
-- [ ] Every major design choice is defensible in an interview
-- [ ] Explicit statement that all data is public and the system is for
+- [x] Every major design choice is defensible in an interview
+      — four ADRs, each recording the options rejected and why
+- [x] Explicit statement that all data is public and the system is for
       platform demonstration only
+      — in the README, in this file, and on the dashboard itself
 
 ## Delivery discipline
 

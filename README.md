@@ -26,26 +26,29 @@ and CI — rather than to produce analytics.
 
 ## Architecture
 
+```mermaid
+flowchart TD
+    OS["OpenSky Network<br/>public ADS-B · OAuth2 · credit-metered"]
+    ING["Ingestion job<br/>retry with jitter · never retries 429<br/>connects as airspace_ingest"]
+    RAW[("raw schema<br/>append-only · provenance on every row<br/>PK: icao24 + observed_at")]
+    DBT["dbt Core<br/>staging → intermediate → marts<br/>connects as airspace_transform"]
+    MARTS[("marts<br/>hourly density + flow · daily profile<br/>pipeline health")]
+    API["Read API + dashboard<br/>connects as airspace_reader"]
+    AF["Airflow<br/>local overlay · manual migrate DAG"]
+    CHK["Health checks<br/>freshness · errors · credit spend"]
+
+    OS -->|"bounded bbox · 3 credits per call"| ING
+    ING -->|"INSERT ... ON CONFLICT DO NOTHING"| RAW
+    RAW --> DBT
+    DBT --> MARTS
+    MARTS -->|"marts only — cannot read upstream"| API
+    AF -.->|schedules| ING
+    RAW -.-> CHK
 ```
-OpenSky /states/all   (public, OAuth2, bounded bbox, scheduled poll)
-        |
-        v
-Ingestion job         rate-limit aware client, retry with backoff,
-        |             structured logs
-        v
-raw schema            append-only; ingestion timestamp + source metadata
-(PostgreSQL 16)       on every row; natural-key uniqueness constraint
-        |
-        v
-dbt Core              sources -> staging -> intermediate -> marts,
-        |             tests at each layer
-        v
-marts                 hourly / daily aggregate counts and distributions
-(PostgreSQL 16)
-        |
-        v
-Read API + dashboard   FastAPI on the read-only role, marts only
-```
+
+Each stage connects as a different database role, and none of them can do the
+next stage's job. Ingestion cannot issue DDL or alter a landed row; dbt cannot
+write to the landing zone; the dashboard cannot read it at all.
 
 Orchestrated by Apache Airflow, containerised with Docker Compose, tested with
 pytest and dbt tests, built on GitHub Actions.
@@ -66,8 +69,8 @@ one starts.
 | 1 | OpenSky client, raw schema, idempotent ingestion, scheduled job | ✅ Complete |
 | 2 | dbt Core: staging → intermediate → marts, late-arriving data handling | ✅ Complete |
 | 3 | GitHub Actions CI, structured logging, row-count and lag checks | ✅ Complete |
-| 4 | Cloud deployment, IaC, secrets management | Not started |
-| 5 | Documentation, ADRs, portfolio packaging | Not started |
+| 4 | Cloud deployment, IaC, secrets management | ⏸ Deferred — see [ADR-0004](docs/adrs/0004-orchestration-and-deployment-topology.md) |
+| 5 | Documentation, ADRs, portfolio packaging | ✅ Complete |
 
 ## Quickstart
 
@@ -165,7 +168,15 @@ commit CI built; only `./dags` is mounted. Rebuild after changing `ingestion/`.
 Shut the overlay down with the same `-f` pair plus `down`.
 
 > The overlay sets `SIMPLE_AUTH_MANAGER_ALL_ADMINS`, so the local UI has no
-> login. That is a local-demo convenience and must not survive to Phase 4.
+> login. That is a local-demo convenience and must never face the internet —
+> Airflow runs arbitrary Python by design.
+
+Airflow is the local and demonstration orchestrator. A production deployment of
+this workload would use a plain scheduled runner instead — one task every two
+minutes does not justify five always-on containers, and the load is idempotent
+so it does not need Airflow's execution guarantees. That reasoning, and why it
+is right-sizing rather than a downgrade, is in
+[ADR-0004](docs/adrs/0004-orchestration-and-deployment-topology.md).
 
 ### Transforming the data (dbt)
 
@@ -340,6 +351,89 @@ Read these before drawing any conclusion from the output.
   inside the `raw` schema. Nothing per-airframe is published.
 - **Not real time.** Batch pipeline with a scheduled cadence. It is not, and
   will not become, an alerting or monitoring system for airspace content.
+
+## Design decisions
+
+The reasoning behind the choices that were expensive to make, including the
+options rejected and the consequences accepted:
+
+| ADR | Decision |
+|---|---|
+| [0001](docs/adrs/0001-opensky-and-overall-architecture.md) | OpenSky as the sole source, the overall architecture, and the API credit budget |
+| [0002](docs/adrs/0002-idempotency-and-late-arriving-data.md) | Idempotency as a database constraint rather than application logic, and rebuilding periods to absorb late data |
+| [0003](docs/adrs/0003-enforcing-the-aggregate-only-constraint.md) | Enforcing the aggregate-only constraint with tests and grants instead of documentation |
+| [0004](docs/adrs/0004-orchestration-and-deployment-topology.md) | Airflow locally, a scheduled runner in production, and why that is right-sizing rather than a downgrade |
+
+## What I would change in production
+
+Things this deliberately does not do at portfolio scale, with the trigger that
+would make each one necessary.
+
+**Move the landing zone to object storage.** Postgres holds raw state vectors
+because at a bounded region and a 120-second cadence the volume is trivial, and
+one engine makes the idempotency guarantee enforceable with a primary key.
+Widen the region or shorten the cadence by an order of magnitude and the right
+answer becomes Parquet in object storage with the warehouse reading from it.
+The layer boundary is drawn so that this is a contained change.
+
+**Give the tests their own database.** The integration suite truncates
+`raw.state_vectors`, which is correct in CI and destructive on a laptop — it
+silently wiped local data once before the guard was added. The guard is a
+stopgap; a throwaway database per test run is the actual fix.
+
+**Real secrets management.** Credentials currently live in `.env`. Production
+needs a secret manager, rotation, and no long-lived database passwords on disk.
+
+**A contract test against the source.** OpenSky returns positional arrays, so
+field order is load-bearing. If they insert a field, parsing silently shifts
+by one and the reject counters may not move. A recorded fixture checked against
+a live response on a schedule would catch that; today it would be caught by a
+human noticing that altitudes look wrong.
+
+**Metrics rather than log parsing.** Health checks currently exit non-zero.
+They should emit to Prometheus or OpenTelemetry so that freshness, reject rate
+and credit spend are graphable and alertable without scraping stdout.
+
+**Retention and partitioning.** `raw.state_vectors` grows without bound.
+Monthly partitions plus a retention policy, before that becomes a problem
+rather than after.
+
+**Backfill.** There is currently no way to fill a gap — OpenSky's live endpoint
+cannot serve the past. Their historical archive can, and would be the route,
+at the cost of a separate access request and a heavier interface.
+
+**A second source behind the same interface.** Single-provider dependency is
+the largest structural risk: if OpenSky changes terms, ingestion stops. The
+ingestion interface is deliberately narrow so another feed could sit behind it.
+
+### What I would do differently from the start
+
+- **A separate test database from day one**, rather than discovering the need
+  after the suite ate local data.
+- **`.gitattributes` before the first Windows edit.** A tool rewrote a shell
+  script with CRLF line endings, which made the container shebang
+  `/usr/bin/env bash` and caused the database bootstrap to silently not run —
+  no error, just missing roles.
+- **Question generated SQL earlier.** `accepted_range` could not express a
+  heading bound, because 0° is due north and valid. The test was wrong, not the
+  data, and three real rows were failing before anyone looked properly.
+
+## Definition of Done
+
+| Criterion | Status |
+|---|---|
+| Fully reproducible with `docker compose up` | ✅ Verified from an empty volume |
+| Documented cloud deployment path | ⏸ Documented in [ADR-0004](docs/adrs/0004-orchestration-and-deployment-topology.md); not yet executed |
+| CI green on `main` | ✅ And verified red when deliberately broken |
+| Idempotent: re-running a window creates no duplicates | ✅ 629 inserted, then 0 inserted / 629 duplicate on live data |
+| Clear provenance on every record | ✅ 0 rows missing provenance |
+| README understandable by a stranger in under 5 minutes | ✅ |
+| Every major design choice defensible | ✅ Four ADRs, with rejected options |
+| Explicit statement that data is public and this is a demonstration | ✅ README, CONSTRAINTS.md, and the dashboard itself |
+
+The one open item is deliberate rather than forgotten: see
+[ADR-0004](docs/adrs/0004-orchestration-and-deployment-topology.md) for why
+deployment is documented and demonstrated rather than left running.
 
 ## Data source, licence and attribution
 
