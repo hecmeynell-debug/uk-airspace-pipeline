@@ -2,7 +2,9 @@
 
 [![CI](https://github.com/hecmeynell-debug/uk-airspace-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/hecmeynell-debug/uk-airspace-pipeline/actions/workflows/ci.yml)
 
-A data engineering pipeline that ingests **public** ADS-B data for the UK
+*DISCLAIMER* This project is an agent-assisted data engineering platform using an agentic harness to use swarm engineering to do ingestion, generate transformations, validate data quality, and investigate failures. This was a proof of concept for my first swarm-engineered project, using a human-in-the-loop to constantly monitor progress.
+
+This is a data engineering pipeline that ingests **public** ADS-B data for the UK
 Flight Information Regions and the eastern North Atlantic, lands it with full
 provenance, transforms it with dbt, and publishes **aggregate, descriptive**
 datasets for situational awareness and resilience analysis.
@@ -412,7 +414,8 @@ ingestion interface is deliberately narrow so another feed could sit behind it.
   after the suite ate local data.
 - **`.gitattributes` before the first Windows edit.** A tool rewrote a shell
   script with CRLF line endings, which made the container shebang
-  `/usr/bin/env bash` and caused the database bootstrap to silently not run —
+  `/usr/bin/env bash
+` and caused the database bootstrap to silently not run —
   no error, just missing roles.
 - **Question generated SQL earlier.** `accepted_range` could not express a
   heading bound, because 0° is due north and valid. The test was wrong, not the
