@@ -43,3 +43,6 @@ data/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# CI artefacts
+junit.xml

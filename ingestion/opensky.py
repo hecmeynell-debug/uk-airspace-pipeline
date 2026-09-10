@@ -179,9 +179,7 @@ class OpenSkyClient:
                 )
                 self._sleep(delay)
 
-        raise OpenSkyTransient(
-            f"giving up after {attempts} attempts: {last_error}"
-        ) from last_error
+        raise OpenSkyTransient(f"giving up after {attempts} attempts: {last_error}") from last_error
 
     def _fetch_once(self) -> StatesResponse:
         headers = {"Accept": "application/json"}

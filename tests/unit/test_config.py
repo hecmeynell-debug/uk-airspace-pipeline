@@ -83,9 +83,7 @@ def test_auth_mode_requires_both_halves_of_the_credential():
 
 def test_the_two_database_identities_are_distinct():
     """Migrations and loading must never share a connection identity."""
-    settings = Settings(
-        airspace_owner_password="owner-pw", airspace_ingest_password="ingest-pw"
-    )
+    settings = Settings(airspace_owner_password="owner-pw", airspace_ingest_password="ingest-pw")
 
     assert "user=airspace_owner" in settings.owner_dsn
     assert "user=airspace_ingest" in settings.ingest_dsn

@@ -4,10 +4,11 @@
     python -m ingestion.run --once        fetch and load one snapshot
     python -m ingestion.run --dry-run     fetch and validate, write nothing
     python -m ingestion.run --loop        poll continuously (local demo only)
+    python -m ingestion.run --check       run pipeline health checks and exit
 
 Exit codes are distinct so a scheduler can react appropriately:
     0  success
-    1  failure
+    1  failure (including a failed health check)
     2  rate limited - back off until the daily allowance resets
     3  configuration or migration error
 """
@@ -21,7 +22,7 @@ from datetime import UTC, datetime
 
 from pydantic import ValidationError
 
-from ingestion import db, loader
+from ingestion import checks, db, loader
 from ingestion.config import Settings
 from ingestion.logging_setup import configure_logging, get_logger
 from ingestion.models import deduplicate, parse_states
@@ -149,6 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--once", action="store_true", help="fetch and load a single snapshot")
     mode.add_argument("--dry-run", action="store_true", help="fetch and validate, write nothing")
     mode.add_argument("--loop", action="store_true", help="poll continuously (local demo only)")
+    mode.add_argument("--check", action="store_true", help="run pipeline health checks and exit")
     return parser
 
 
@@ -163,6 +165,13 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_CONFIG_ERROR
 
     configure_logging(settings.log_level)
+
+    if args.check:
+        # Health checks read raw only, so they run on the least-privileged
+        # connection available rather than the owner.
+        with db.connect(settings.ingest_dsn) as conn:
+            results = checks.run_health_checks(conn, settings)
+        return EXIT_OK if all(r.ok for r in results) else EXIT_FAILURE
 
     if args.migrate:
         try:

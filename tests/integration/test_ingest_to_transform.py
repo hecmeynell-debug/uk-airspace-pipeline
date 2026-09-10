@@ -106,9 +106,7 @@ def _run_dbt(dbt: str, settings: Settings, *args: str) -> subprocess.CompletedPr
 
 
 @respx.mock
-def test_ingested_snapshot_is_faithfully_aggregated(
-    migrated_db, db_settings, dbt, sample_states
-):
+def test_ingested_snapshot_is_faithfully_aggregated(migrated_db, db_settings, dbt, sample_states):
     if not db_settings.airspace_transform_password:
         pytest.skip("AIRSPACE_TRANSFORM_PASSWORD not configured")
 
@@ -204,8 +202,6 @@ def test_marts_expose_no_aircraft_identity(db_settings, dbt):
         pytest.skip("marts not built yet; run dbt build first")
 
     leaked = [
-        f"{table}.{column}"
-        for table, column in columns
-        if column.lower() in FORBIDDEN_MART_COLUMNS
+        f"{table}.{column}" for table, column in columns if column.lower() in FORBIDDEN_MART_COLUMNS
     ]
     assert not leaked, f"per-airframe identity reached a mart: {leaked}"

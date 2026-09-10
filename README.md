@@ -1,5 +1,7 @@
 # UK Airspace Pipeline
 
+[![CI](https://github.com/hecmeynell-debug/uk-airspace-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/hecmeynell-debug/uk-airspace-pipeline/actions/workflows/ci.yml)
+
 A data engineering pipeline that ingests **public** ADS-B data for the UK
 Flight Information Regions and the eastern North Atlantic, lands it with full
 provenance, transforms it with dbt, and publishes **aggregate, descriptive**
@@ -61,7 +63,7 @@ one starts.
 | 0 | Repository foundations, Postgres 16, least-privilege roles, ADR-0001 | ✅ Complete |
 | 1 | OpenSky client, raw schema, idempotent ingestion, scheduled job | ✅ Complete |
 | 2 | dbt Core: staging → intermediate → marts, late-arriving data handling | ✅ Complete |
-| 3 | GitHub Actions CI, structured logging, row-count and lag checks | Not started |
+| 3 | GitHub Actions CI, structured logging, row-count and lag checks | ✅ Complete |
 | 4 | Cloud deployment, IaC, secrets management | Not started |
 | 5 | Documentation, ADRs, portfolio packaging | Not started |
 
@@ -205,6 +207,52 @@ mechanisms, deliberately overlapping:
 country of registration would be ordinary aviation statistics in another
 project; in a defence-adjacent one it invites exactly the reading this project
 exists to avoid, and excluding it costs nothing.
+
+### Observability
+
+```bash
+python -m ingestion.run --check      # exit 0 healthy, 1 if any check fails
+```
+
+Five checks, each of which has been driven into its failing state by a test —
+a monitoring check only ever seen passing is a decoration:
+
+| Check | Fails when |
+|---|---|
+| `freshness` | No row has landed in 3 polling intervals |
+| `run_failure_rate` | Over 20% of runs failed in the last hour |
+| `no_stuck_runs` | A run has sat in `running` for over 15 minutes |
+| `reject_rate` | Over 1% of received rows were malformed |
+| `credit_budget` | Over 90% of the daily API allowance is spent |
+
+`fct_ingestion_health` carries the same signals as an hourly mart — run counts,
+success and reject rates, latency, credit spend. Every log line is JSON, so
+`ingest.completed`, `healthcheck.result` and the rest are greppable.
+
+**Everything monitored here is about the pipeline.** Freshness, row counts,
+error rates, latency, credit spend. Nothing alerts on airspace *content* — no
+volume anomalies, no "unusual activity" thresholds. That is a hard non-goal,
+not an unimplemented feature, and a change adding one should be rejected on
+sight.
+
+[docs/failure-modes.md](docs/failure-modes.md) documents what breaks, how you
+find out, and what to do — including the ones with no remedy, like coverage
+gaps being indistinguishable from an absence of traffic.
+
+### Continuous integration
+
+Three jobs on every push and pull request:
+
+| Job | What it does |
+|---|---|
+| `lint` | `ruff check` and `ruff format --check` |
+| `test` | Brings up the project's own compose stack, applies migrations, runs `dbt build`, then the full pytest suite |
+| `dags` | Builds the real Airflow image and parses the DAGs inside it, asserting `catchup` stays off and `max_active_runs` stays 1 |
+
+CI uses the repo's own `docker-compose.yml` rather than a GitHub service
+container, so it exercises the same Postgres image, the same bootstrap script
+and the same least-privilege roles that ship here. A service container would
+test a database this project never uses.
 
 ### OpenSky credentials
 

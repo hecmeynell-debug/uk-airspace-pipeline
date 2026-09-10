@@ -62,9 +62,7 @@ def discover_migrations(migrations_dir: Path | None = None) -> list[Path]:
     return sorted(directory.glob("*.sql"))
 
 
-def apply_migrations(
-    conn: psycopg.Connection, migrations_dir: Path | None = None
-) -> list[str]:
+def apply_migrations(conn: psycopg.Connection, migrations_dir: Path | None = None) -> list[str]:
     """Apply any unapplied migrations in filename order.
 
     Returns the filenames actually applied, so a caller can tell "already up to

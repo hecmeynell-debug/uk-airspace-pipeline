@@ -67,8 +67,7 @@ class Settings(BaseSettings):
     opensky_client_id: str = ""
     opensky_client_secret: str = ""
     opensky_token_url: str = (
-        "https://auth.opensky-network.org/auth/realms/opensky-network"
-        "/protocol/openid-connect/token"
+        "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
     )
     opensky_api_base: str = "https://opensky-network.org/api"
     opensky_timeout_seconds: float = 30.0
@@ -107,6 +106,11 @@ class Settings(BaseSettings):
     @property
     def credit_cost(self) -> int:
         return credit_cost_for_area(self.bbox_area_sq_deg)
+
+    @property
+    def daily_credit_allowance(self) -> int:
+        """Credits OpenSky grants per day, per the published tiers."""
+        return 4000 if self.auth_mode == "oauth2_client_credentials" else 400
 
     @property
     def daily_credit_budget(self) -> int:

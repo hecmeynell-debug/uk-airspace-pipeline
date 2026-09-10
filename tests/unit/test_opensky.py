@@ -51,9 +51,7 @@ def _client(settings: Settings, clock=None) -> OpenSkyClient:
 
 @respx.mock
 def test_fetch_returns_snapshot_time_and_rows(settings, sample_states):
-    respx.get(path=STATES_PATH).mock(
-        return_value=httpx.Response(200, json=_payload(sample_states))
-    )
+    respx.get(path=STATES_PATH).mock(return_value=httpx.Response(200, json=_payload(sample_states)))
 
     with _client(settings) as client:
         response = client.fetch_states()

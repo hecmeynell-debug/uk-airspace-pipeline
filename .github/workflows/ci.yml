@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch makes the older run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Matches the Python the Airflow image ships, so CI exercises the same
+  # interpreter the scheduler will actually run.
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Check formatting
+        run: ruff format --check .
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      # Uses the project's own compose file rather than a GitHub service
+      # container, so CI exercises the same Postgres image, the same bootstrap
+      # script and the same least-privilege roles that ship in the repo. A
+      # service container would test a database this project never uses.
+      - name: Start Postgres
+        run: |
+          cp .env.example .env
+          docker compose up -d
+          for _ in $(seq 1 60); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' airspace-postgres 2>/dev/null || echo starting)
+            [ "$status" = "healthy" ] && break
+            sleep 2
+          done
+          docker compose ps
+          test "$(docker inspect --format '{{.State.Health.Status}}' airspace-postgres)" = "healthy"
+
+      - name: Install project
+        run: pip install -e ".[dev,transform]"
+
+      - name: Apply migrations
+        run: python -m ingestion.run --migrate
+
+      - name: dbt deps
+        run: dbt deps --project-dir transform
+
+      # Proves the models compile and run against a real database. The
+      # meaningful data assertions live in the pytest suite below, which drives
+      # a known payload through ingestion and then checks what the marts say.
+      - name: dbt build
+        env:
+          DBT_PROFILES_DIR: ${{ github.workspace }}/transform
+        run: dbt build --project-dir transform
+
+      # The integration fixtures truncate raw.state_vectors. That is correct
+      # here - the database is created fresh for this run and thrown away - and
+      # the opt-in exists to stop it happening on someone's laptop.
+      - name: Tests
+        env:
+          AIRSPACE_ALLOW_DESTRUCTIVE_TESTS: "1"
+          DBT_PROFILES_DIR: ${{ github.workspace }}/transform
+        run: pytest -q --junitxml=junit.xml
+
+      - name: Postgres logs on failure
+        if: failure()
+        run: docker compose logs postgres | tail -100
+
+      - name: Publish test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-results
+          path: junit.xml
+          if-no-files-found: ignore
+
+  dags:
+    name: Airflow DAGs
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      # Builds the real scheduler image and asks Airflow to parse the DAGs
+      # inside it. A DAG that imports cleanly on a laptop can still fail in the
+      # image - a missing dependency, a different Python - so this checks the
+      # artefact rather than the source tree.
+      #
+      # docker build directly rather than via compose: this job needs no
+      # database, and compose would demand the whole .env interpolation for
+      # nothing.
+      - name: Build Airflow image
+        run: docker build -f docker/airflow.Dockerfile -t uk-airspace-airflow:ci .
+
+      # dags/ is mounted at runtime by the compose overlay rather than baked
+      # into the image, so it is mounted here too. DagBag parses files without
+      # touching the metadata database; the sqlite URL just stops Airflow
+      # complaining about an unconfigured backend during import.
+      - name: Check DAGs import
+        run: |
+          docker run --rm -i \
+            -v "${{ github.workspace }}/dags:/opt/airflow/dags:ro" \
+            -e AIRFLOW__CORE__LOAD_EXAMPLES=False \
+            -e AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags \
+            -e AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////tmp/airflow-ci.db \
+            --entrypoint python uk-airspace-airflow:ci - <<'PY'
+          import sys
+
+          # Airflow 3.3 moved DagBag out of airflow.models and dropped the
+          # include_examples argument; LOAD_EXAMPLES is set in the environment
+          # above instead.
+          from airflow.dag_processing.dagbag import DagBag
+
+          bag = DagBag(dag_folder="/opt/airflow/dags")
+
+          for path, error in bag.import_errors.items():
+              print(f"::error file={path}::{error}")
+
+          if bag.import_errors:
+              sys.exit(1)
+
+          print(f"parsed {len(bag.dags)} DAG(s): {sorted(bag.dags)}")
+
+          # Guard the two properties that would quietly cost real money or
+          # produce mislabelled data if someone changed them.
+          ingest = bag.dags["opensky_ingest"]
+          assert not ingest.catchup, "catchup must stay off: OpenSky serves live data only"
+          assert ingest.max_active_runs == 1, "overlapping runs would race for the credit budget"
+          print("DAG invariants hold")
+          PY
+
