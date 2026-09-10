@@ -25,6 +25,7 @@ aggregated as (
 
         count(*)                                 as observation_count,
         count(distinct icao24)                   as distinct_aircraft,
+        min(icao24)                              as icao24,  -- DELIBERATE VIOLATION
 
         -- How much of the region this band was observed across. A coverage
         -- measure, not a location: it says how widely spread the traffic was.
