@@ -23,6 +23,11 @@ transform = [
     "dbt-core>=1.9",
     "dbt-postgres>=1.9",
 ]
+api = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "psycopg-pool>=3.2",
+]
 
 [project.scripts]
 airspace-ingest = "ingestion.run:main"
@@ -32,7 +37,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["ingestion*"]
+include = ["ingestion*", "api*"]
 
 [tool.ruff]
 line-length = 100
@@ -41,6 +46,11 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency and parameter markers are calls in argument defaults by
+# design; B008 is a false positive for them, not a finding.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Header"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
@@ -48,4 +58,10 @@ markers = [
     # populated database unless AIRSPACE_ALLOW_DESTRUCTIVE_TESTS=1.
     "integration: requires a live Postgres; destructive to the raw schema",
 ]
-filterwarnings = ["error::DeprecationWarning"]
+# Our own deprecations stay fatal. Third-party ones we cannot fix are ignored
+# individually rather than by relaxing the rule, so a new one still surfaces.
+filterwarnings = [
+    "error::DeprecationWarning",
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:DeprecationWarning",
+]

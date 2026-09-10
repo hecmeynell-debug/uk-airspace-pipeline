@@ -70,7 +70,8 @@ jobs:
           test "$(docker inspect --format '{{.State.Health.Status}}' airspace-postgres)" = "healthy"
 
       - name: Install project
-        run: pip install -e ".[dev,transform]"
+        # api extra included: the read-API tests import fastapi.
+        run: pip install -e ".[dev,transform,api]"
 
       - name: Apply migrations
         run: python -m ingestion.run --migrate

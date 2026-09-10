@@ -44,11 +44,13 @@ marts                 hourly / daily aggregate counts and distributions
 (PostgreSQL 16)
         |
         v
-(optional) thin read API or dashboard   read-only role, marts only
+Read API + dashboard   FastAPI on the read-only role, marts only
 ```
 
 Orchestrated by Apache Airflow, containerised with Docker Compose, tested with
 pytest and dbt tests, built on GitHub Actions.
+
+![The dashboard: traffic density by grid cell, altitude bands, and pipeline health](docs/dashboard.png)
 
 The reasoning behind every one of those choices — including the ones rejected
 — is in [ADR-0001](docs/adrs/0001-opensky-and-overall-architecture.md).
@@ -78,8 +80,11 @@ cd uk-airspace-pipeline
 cp .env.example .env      # edit if you like; defaults work for local dev
 docker compose up -d
 
-docker compose ps         # postgres should report (healthy)
+docker compose ps         # postgres and dashboard should report (healthy)
 ```
+
+The dashboard is at <http://127.0.0.1:8000>. It will say the marts are not
+built until you have ingested data and run `dbt build` — see below.
 
 Connect and confirm the bootstrap:
 
@@ -148,7 +153,7 @@ history for registered users), so a catch-up run cannot retrieve the window it
 is nominally filling — it would re-fetch *now* under an old logical date,
 mislabel the data and spend credits for it. Gaps stay gaps, honestly.
 
-Checking DAGs parse, which is what CI will assert in Phase 3:
+Checking DAGs parse locally (CI asserts the same thing inside the built image):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.airflow.yml \
@@ -180,7 +185,7 @@ it reads.
 |---|---|---|
 | `staging` | view | One-to-one cleaning of `raw`. Renames, casts, unit conversions. No filtering |
 | `intermediate` | view | Assigns a coarse grid cell and altitude band. The last layer where per-airframe identity exists |
-| `marts` | table | `fct_airspace_activity_hourly`, `fct_airspace_activity_daily`. Aggregates only |
+| `marts` | table | `fct_airspace_activity_hourly`, `fct_airspace_activity_daily`, `fct_ingestion_health`. Aggregates only |
 
 **Late-arriving data.** An observation can land well after the hour it belongs
 to — a poll at 12:01 returns positions stamped 11:58, and a retry after an
@@ -207,6 +212,35 @@ mechanisms, deliberately overlapping:
 country of registration would be ordinary aviation statistics in another
 project; in a defence-adjacent one it invites exactly the reading this project
 exists to avoid, and excluding it costs nothing.
+
+### Dashboard and read API
+
+`docker compose up -d` starts it alongside Postgres, at <http://127.0.0.1:8000>.
+Interactive API docs at `/docs`.
+
+| Endpoint | Returns |
+|---|---|
+| `/api/meta` | Region, source, limitations and the non-goals |
+| `/api/activity/grid?hours=` | Observation density per 1° grid cell |
+| `/api/activity/hourly?hours=` | Hourly observation totals |
+| `/api/activity/altitude?hours=` | Profile by altitude band |
+| `/api/activity/daily?days=` | Daily profile with a coverage measure |
+| `/api/pipeline-health?hours=` | Runs, error rates, latency, credit spend |
+| `/health` | Liveness of the service itself, independent of the pipeline |
+
+Three things about it are deliberate:
+
+- **It holds only the reader credential.** The container is given
+  `AIRSPACE_READER_PASSWORD` and no other — not the owner, ingest or transform
+  password. It cannot read `raw`, `staging` or `intermediate`. Serving
+  per-airframe data is not something the endpoints decline to do; it is
+  something this service *cannot* do, and a test asserts the denial.
+- **No third-party JavaScript.** Every chart is hand-rolled inline SVG, so the
+  page works offline and pulls in no CDN supply chain.
+- **Every window parameter is bounded**, so no URL edit turns a dashboard query
+  into a bulk export. Tested with out-of-range values.
+
+The container runs as a non-root user (uid 10001).
 
 ### Observability
 
@@ -297,12 +331,16 @@ If you use this work in a publication, cite the OpenSky Network paper:
 ## Repository layout
 
 ```
-ingestion/      OpenSky client and load jobs
+ingestion/      OpenSky client, load jobs and health checks
 transform/      dbt Core project
+api/            read API and dashboard (reader role only)
 dags/           Airflow DAGs
 tests/          pytest unit and integration tests
 db/init/        database bootstrap: roles, schemas, grants
+db/migrations/  raw schema migrations
+docker/         API and Airflow images
 docs/adrs/      architecture decision records
+docs/failure-modes.md   what breaks, and what to do
 CONSTRAINTS.md  hard non-goals and definition of done
 ```
 

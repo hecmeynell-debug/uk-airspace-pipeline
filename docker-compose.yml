@@ -37,6 +37,37 @@ services:
     # Modest, explicit limits so the local footprint is predictable.
     shm_size: 256mb
 
+  # Read API and dashboard. Small enough to belong in the base stack, so
+  # `docker compose up` produces something you can actually look at. Airflow
+  # stays an overlay because it is five more containers.
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    image: uk-airspace-api:local
+    container_name: airspace-dashboard
+    restart: unless-stopped
+    environment:
+      # Note what is absent: no owner, ingest or transform password. This
+      # container is given the reader credential and nothing else, so it
+      # cannot reach raw, staging or intermediate even if asked to.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-airspace}
+      AIRSPACE_READER_PASSWORD: ${AIRSPACE_READER_PASSWORD:?set in .env}
+      # Only used to describe the region in /api/meta.
+      OPENSKY_LAT_MIN: ${OPENSKY_LAT_MIN:-49.0}
+      OPENSKY_LAT_MAX: ${OPENSKY_LAT_MAX:-61.0}
+      OPENSKY_LON_MIN: ${OPENSKY_LON_MIN:--10.0}
+      OPENSKY_LON_MAX: ${OPENSKY_LON_MAX:-3.0}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-120}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
     name: airspace_postgres_data

@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UK Airspace Pipeline</title>
+<!-- Inline data URI: no external request, so no 404 and no third-party fetch. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%231f5f8b'/%3E%3Cg fill='%23ffffff'%3E%3Crect x='3' y='3' width='3' height='3' opacity='.45'/%3E%3Crect x='7' y='3' width='3' height='3' opacity='.7'/%3E%3Crect x='3' y='7' width='3' height='3' opacity='.7'/%3E%3Crect x='7' y='7' width='3' height='3'/%3E%3Crect x='11' y='7' width='2' height='3' opacity='.45'/%3E%3Crect x='7' y='11' width='3' height='2' opacity='.45'/%3E%3C/g%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --panel: #ffffff;
+    --ink: #16181d;
+    --muted: #5c6470;
+    --line: #dfe3e8;
+    --accent: #1f5f8b;
+    --warn: #8a5a00;
+    --bad: #a11b1b;
+    --good: #1d6b3f;
+    --c0: #eef3f8;
+    --c1: #cfe0ee;
+    --c2: #a4c6e0;
+    --c3: #6ea6cd;
+    --c4: #3d82b4;
+    --c5: #1f5f8b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a; --panel: #1c1f25; --ink: #e8eaee; --muted: #98a1ae;
+      --line: #2c313a; --accent: #7fb5da;
+      --c0: #1e242c; --c1: #263644; --c2: #2f4c62; --c3: #3b6785; --c4: #4b86ab; --c5: #6ba7cd;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 16px 56px; }
+  header h1 { font-size: 1.55rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .banner {
+    background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+    border-radius: 6px; padding: 12px 14px; margin-bottom: 20px; font-size: 0.9rem;
+  }
+  .banner strong { display: block; margin-bottom: 3px; }
+  .strip { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+  .stat {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    padding: 10px 14px; min-width: 132px; flex: 1 1 132px;
+  }
+  .stat .k { color: var(--muted); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat .v { font-size: 1.3rem; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  /* align-items:start so each panel sizes to its content rather than
+     stretching to match the tallest one and leaving dead space. */
+  .grid2 { display: grid; grid-template-columns: 1.25fr 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 6px; padding: 16px; margin-bottom: 16px; overflow: hidden;
+  }
+  .panel h2 { font-size: 0.98rem; margin: 0 0 2px; }
+  .panel .note { color: var(--muted); font-size: 0.82rem; margin: 0 0 12px; }
+  svg { display: block; width: 100%; height: auto; overflow: visible; }
+  text { fill: var(--muted); font-size: 11px; }
+  text.val { fill: var(--ink); font-variant-numeric: tabular-nums; }
+  .legend { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 0.78rem; color: var(--muted); }
+  .legend i { width: 26px; height: 10px; display: inline-block; border-radius: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+  th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left; font-variant-numeric: normal; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .ok { color: var(--good); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+  footer { margin-top: 28px; color: var(--muted); font-size: 0.84rem; }
+  footer ul { padding-left: 18px; margin: 6px 0 0; }
+  .empty { color: var(--muted); padding: 22px 0; text-align: center; }
+  code { background: var(--c0); padding: 1px 5px; border-radius: 3px; font-size: 0.85em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>UK Airspace Pipeline</h1>
+    <p class="sub">Observed traffic density over the UK FIRs and eastern North Atlantic, from public ADS-B data.</p>
+  </header>
+
+  <div class="banner">
+    <strong>Aggregate and descriptive only.</strong>
+    <span id="nonGoals">No individual aircraft tracking. No intent prediction or threat scoring. All data is public.</span>
+  </div>
+
+  <div class="strip" id="stats"></div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h2>Traffic density</h2>
+      <p class="note">Observations per 1&deg; grid cell, last 24h. Cells, not positions &mdash; deliberately too coarse to locate anything.</p>
+      <div id="gridChart"></div>
+      <div class="legend"><span>fewer</span><i id="lg0"></i><i id="lg1"></i><i id="lg2"></i><i id="lg3"></i><i id="lg4"></i><i id="lg5"></i><span>more</span></div>
+    </div>
+
+    <div class="panel">
+      <h2>Altitude bands</h2>
+      <p class="note">Share of observations by band, last 24h.</p>
+      <div id="altChart"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Observations over time</h2>
+    <p class="note">Hourly totals. Gaps are gaps &mdash; a quiet hour and an outage look the same here, which is why pipeline health is shown separately.</p>
+    <div id="hourlyChart"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Pipeline health</h2>
+    <p class="note">The pipeline, not the airspace. Runs, error rates, latency and API credit spend.</p>
+    <div id="healthTable"></div>
+  </div>
+
+  <footer>
+    <strong>Limitations</strong>
+    <p id="limitations"></p>
+    <ul>
+      <li>Platform engineering demonstration only. Not an operational system.</li>
+      <li>Data from the <a href="https://opensky-network.org">OpenSky Network</a>, used under its research and non-commercial terms.</li>
+    </ul>
+  </footer>
+
+</div>
+
+<script>
+const SCALE = ["--c0","--c1","--c2","--c3","--c4","--c5"].map(v =>
+  getComputedStyle(document.documentElement).getPropertyValue(v).trim());
+
+const fmt = n => n === null || n === undefined ? "–" : Number(n).toLocaleString("en-GB");
+const el = id => document.getElementById(id);
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (r.status === 503) return {notReady: true};
+  if (!r.ok) throw new Error(`${url} -> ${r.status}`);
+  return r.json();
+}
+
+function svg(w, h, body) {
+  return `<svg viewBox="0 0 ${w} ${h}" role="img">${body}</svg>`;
+}
+
+function emptyState(node, msg) {
+  node.innerHTML = `<p class="empty">${msg}</p>`;
+}
+
+/* ---------- grid density -------------------------------------------- */
+function renderGrid(node, rows, region) {
+  if (!rows.length) return emptyState(node, "No observations in this window yet.");
+
+  // Infer cell size from the data rather than duplicating the dbt var here.
+  const lats = [...new Set(rows.map(r => +r.grid_lat))].sort((a, b) => a - b);
+  let cell = 1;
+  for (let i = 1; i < lats.length; i++) cell = Math.min(cell, lats[i] - lats[i - 1]) || 1;
+
+  const latMin = Math.min(region.lat_min, ...lats);
+  const latMax = Math.max(region.lat_max, ...lats.map(l => l + cell));
+  const lonsAll = rows.map(r => +r.grid_lon);
+  const lonMin = Math.min(region.lon_min, ...lonsAll);
+  const lonMax = Math.max(region.lon_max, ...lonsAll.map(l => l + cell));
+
+  const pad = {l: 34, r: 8, t: 8, b: 22};
+  const W = 560, H = 460;
+  const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+  const x = lon => pad.l + ((lon - lonMin) / (lonMax - lonMin)) * iw;
+  const y = lat => pad.t + (1 - (lat - latMin) / (latMax - latMin)) * ih;
+
+  const max = Math.max(...rows.map(r => +r.observation_count));
+  const colour = v => SCALE[Math.min(SCALE.length - 1,
+    Math.floor(Math.pow(v / max, 0.55) * SCALE.length))];
+
+  let body = `<rect x="${pad.l}" y="${pad.t}" width="${iw}" height="${ih}" fill="var(--c0)" stroke="var(--line)"/>`;
+
+  for (const r of rows) {
+    const lat = +r.grid_lat, lon = +r.grid_lon, v = +r.observation_count;
+    const x0 = x(lon), x1 = x(lon + cell), y0 = y(lat + cell), y1 = y(lat);
+    body += `<rect x="${x0}" y="${y0}" width="${Math.max(1, x1 - x0)}" height="${Math.max(1, y1 - y0)}" `
+         +  `fill="${colour(v)}" stroke="var(--panel)" stroke-width="0.5">`
+         +  `<title>${lat}°, ${lon}° — ${fmt(v)} observations</title></rect>`;
+  }
+
+  for (let lat = Math.ceil(latMin / 2) * 2; lat <= latMax; lat += 2) {
+    body += `<text x="${pad.l - 6}" y="${y(lat) + 4}" text-anchor="end">${lat}°N</text>`;
+  }
+  for (let lon = Math.ceil(lonMin / 4) * 4; lon <= lonMax; lon += 4) {
+    body += `<text x="${x(lon)}" y="${H - 6}" text-anchor="middle">${lon}°</text>`;
+  }
+
+  node.innerHTML = svg(W, H, body);
+}
+
+/* ---------- altitude bands ------------------------------------------ */
+const BAND_LABEL = {
+  ground: "On ground", below_10k: "Below 10k ft", "10k_to_24k": "10k–24k ft",
+  "24k_to_35k": "24k–35k ft", above_35k: "Above 35k ft", unknown: "Unknown"
+};
+
+function renderAltitude(node, rows) {
+  if (!rows.length) return emptyState(node, "No observations in this window yet.");
+  const total = rows.reduce((s, r) => s + (+r.observation_count), 0);
+  const max = Math.max(...rows.map(r => +r.observation_count));
+
+  const W = 420, rowH = 42, pad = {l: 96, r: 54, t: 6};
+  const H = pad.t + rows.length * rowH;
+  let body = "";
+
+  rows.forEach((r, i) => {
+    const v = +r.observation_count;
+    const yTop = pad.t + i * rowH;
+    const bw = ((W - pad.l - pad.r) * v) / max;
+    const pct = total ? ((100 * v) / total).toFixed(1) : "0.0";
+    body += `<text x="${pad.l - 8}" y="${yTop + 20}" text-anchor="end">${BAND_LABEL[r.altitude_band] || r.altitude_band}</text>`
+         +  `<rect x="${pad.l}" y="${yTop + 8}" width="${Math.max(1, bw)}" height="18" rx="3" fill="var(--c4)">`
+         +  `<title>${fmt(v)} observations (${pct}%)</title></rect>`
+         +  `<text class="val" x="${pad.l + bw + 7}" y="${yTop + 21}">${fmt(v)}</text>`
+         +  `<text x="${pad.l}" y="${yTop + 38}">${pct}%`
+         +  (r.avg_velocity_kts ? ` · avg ${fmt(r.avg_velocity_kts)} kts` : "") + `</text>`;
+  });
+
+  node.innerHTML = svg(W, H, body);
+}
+
+/* ---------- hourly series ------------------------------------------- */
+function renderHourly(node, rows) {
+  if (rows.length < 2) return emptyState(node, "Not enough history yet — needs at least two hours of ingestion.");
+
+  const pad = {l: 46, r: 10, t: 10, b: 26};
+  const W = 1100, H = 240;
+  const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+  const max = Math.max(...rows.map(r => +r.observation_count)) || 1;
+  const x = i => pad.l + (rows.length === 1 ? iw / 2 : (i / (rows.length - 1)) * iw);
+  const y = v => pad.t + ih - (v / max) * ih;
+
+  let line = "", area = `M ${x(0)} ${pad.t + ih} `;
+  rows.forEach((r, i) => {
+    const px = x(i), py = y(+r.observation_count);
+    line += (i ? " L " : "M ") + px + " " + py;
+    area += `L ${px} ${py} `;
+  });
+  area += `L ${x(rows.length - 1)} ${pad.t + ih} Z`;
+
+  let body = "";
+  for (let g = 0; g <= 4; g++) {
+    const v = (max / 4) * g, py = y(v);
+    body += `<line x1="${pad.l}" y1="${py}" x2="${W - pad.r}" y2="${py}" stroke="var(--line)"/>`
+         +  `<text x="${pad.l - 7}" y="${py + 4}" text-anchor="end">${fmt(Math.round(v))}</text>`;
+  }
+  body += `<path d="${area}" fill="var(--c2)" opacity="0.55"/>`
+       +  `<path d="${line}" fill="none" stroke="var(--c5)" stroke-width="2"/>`;
+
+  const step = Math.max(1, Math.ceil(rows.length / 10));
+  rows.forEach((r, i) => {
+    if (i % step && i !== rows.length - 1) return;
+    const d = new Date(r.activity_hour);
+    const label = d.toLocaleString("en-GB", {day: "2-digit", month: "short", hour: "2-digit", hour12: false}) + "h";
+    body += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${label}</text>`;
+  });
+
+  node.innerHTML = svg(W, H, body);
+}
+
+/* ---------- pipeline health ----------------------------------------- */
+function renderHealth(node, rows) {
+  if (!rows.length) return emptyState(node, "No ingestion runs in this window.");
+  const recent = rows.slice(-12).reverse();
+  const cls = r => (+r.failed_count > 0 ? "bad" : "ok");
+
+  node.innerHTML = `<table>
+    <thead><tr>
+      <th>Hour (UTC)</th><th>Runs</th><th>Failed</th><th>Success %</th>
+      <th>Rejected %</th><th>Rows in</th><th>Deduped</th><th>Lag (s)</th><th>Credits</th>
+    </tr></thead>
+    <tbody>${recent.map(r => `<tr>
+      <td>${new Date(r.health_hour).toISOString().slice(0, 16).replace("T", " ")}</td>
+      <td>${fmt(r.run_count)}</td>
+      <td class="${cls(r)}">${fmt(r.failed_count)}</td>
+      <td>${r.success_rate_pct ?? "–"}</td>
+      <td>${r.reject_rate_pct ?? "–"}</td>
+      <td>${fmt(r.rows_inserted)}</td>
+      <td>${fmt(r.rows_duplicate)}</td>
+      <td>${r.avg_lag_seconds ?? "–"}</td>
+      <td>${fmt(r.credits_consumed)}</td>
+    </tr>`).join("")}</tbody></table>`;
+}
+
+/* ---------- stats strip --------------------------------------------- */
+function renderStats(fresh, hourly, health) {
+  const age = fresh && fresh.age_seconds != null ? +fresh.age_seconds : null;
+  const ageTxt = age === null ? "–"
+    : age < 90 ? `${Math.round(age)}s ago`
+    : age < 5400 ? `${Math.round(age / 60)}m ago`
+    : `${(age / 3600).toFixed(1)}h ago`;
+  const ageCls = age === null ? "" : age < 360 ? "ok" : age < 3600 ? "warn" : "bad";
+
+  const obs24 = hourly.slice(-24).reduce((s, r) => s + (+r.observation_count), 0);
+  const runs = health.reduce((s, r) => s + (+r.run_count), 0);
+  const failed = health.reduce((s, r) => s + (+r.failed_count), 0);
+  const credits = health.reduce((s, r) => s + (+r.credits_consumed), 0);
+
+  const cards = [
+    ["Last data", `<span class="${ageCls}">${ageTxt}</span>`],
+    ["Observations 24h", fmt(obs24)],
+    ["Ingestion runs 24h", fmt(runs)],
+    ["Failed runs", `<span class="${failed ? "bad" : "ok"}">${fmt(failed)}</span>`],
+    ["Credits used 24h", fmt(credits)],
+  ];
+  el("stats").innerHTML = cards.map(([k, v]) =>
+    `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+}
+
+/* ---------- boot ----------------------------------------------------- */
+async function load() {
+  SCALE.forEach((c, i) => { const n = el("lg" + i); if (n) n.style.background = c; });
+
+  try {
+    const [meta, fresh, grid, alt, hourly, health] = await Promise.all([
+      getJSON("/api/meta"),
+      getJSON("/api/freshness"),
+      getJSON("/api/activity/grid?hours=24"),
+      getJSON("/api/activity/altitude?hours=24"),
+      getJSON("/api/activity/hourly?hours=48"),
+      getJSON("/api/pipeline-health?hours=24"),
+    ]);
+
+    el("limitations").textContent = meta.limitations || "";
+    el("nonGoals").textContent = (meta.non_goals || []).join(" · ");
+
+    if (grid.notReady) {
+      const msg = "The transformation layer has not run yet. Run <code>dbt build</code>.";
+      ["gridChart", "altChart", "hourlyChart", "healthTable"].forEach(id => emptyState(el(id), msg));
+      el("stats").innerHTML = `<div class="stat"><div class="k">Status</div><div class="v warn">Marts not built</div></div>`;
+      return;
+    }
+
+    renderStats(fresh.data, hourly.data, health.data);
+    renderGrid(el("gridChart"), grid.data, meta.region);
+    renderAltitude(el("altChart"), alt.data);
+    renderHourly(el("hourlyChart"), hourly.data);
+    renderHealth(el("healthTable"), health.data);
+  } catch (err) {
+    el("stats").innerHTML =
+      `<div class="stat"><div class="k">Status</div><div class="v bad">Unavailable</div></div>`;
+    ["gridChart", "altChart", "hourlyChart", "healthTable"].forEach(id =>
+      emptyState(el(id), "Could not reach the API: " + err.message));
+  }
+}
+
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>
