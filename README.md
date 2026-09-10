@@ -59,7 +59,7 @@ one starts.
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Repository foundations, Postgres 16, least-privilege roles, ADR-0001 | ✅ Complete |
-| 1 | OpenSky client, raw schema, idempotent ingestion, scheduled job | Not started |
+| 1 | OpenSky client, raw schema, idempotent ingestion, scheduled job | 🚧 Ingestion complete and tested; Airflow DAG outstanding |
 | 2 | dbt Core: staging → intermediate → marts, late-arriving data handling | Not started |
 | 3 | GitHub Actions CI, structured logging, row-count and lag checks | Not started |
 | 4 | Cloud deployment, IaC, secrets management | Not started |
@@ -89,6 +89,31 @@ docker compose exec postgres psql -U postgres -d airspace \
 You should see the `raw` schema owned by `airspace_owner`, and four
 least-privilege roles. Tear down with `docker compose down`, or
 `docker compose down -v` to also drop the data volume.
+
+### Running an ingestion
+
+```bash
+python -m venv .venv && ./.venv/Scripts/python.exe -m pip install -e ".[dev]"
+
+python -m ingestion.run --migrate    # apply schema migrations (runs as airspace_owner)
+python -m ingestion.run --dry-run    # fetch and validate, write nothing
+python -m ingestion.run --once       # fetch and load one snapshot
+```
+
+Run `--once` twice and the second load will report rows as duplicates rather
+than inserting them. Idempotency is enforced by a primary key on
+`(icao24, observed_at)` with `ON CONFLICT DO NOTHING`, so it holds regardless
+of how many times, or how many workers, replay the same window.
+
+Exit codes are distinct so a scheduler can respond appropriately: `0` success,
+`1` failure, `2` rate limited (back off until the daily allowance resets),
+`3` configuration or migration error.
+
+```bash
+./.venv/Scripts/python.exe -m pytest        # unit tests always; integration tests
+                                            # skip if no Postgres is reachable
+./.venv/Scripts/python.exe -m ruff check .
+```
 
 ### OpenSky credentials
 
